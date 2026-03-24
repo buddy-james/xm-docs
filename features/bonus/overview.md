@@ -159,10 +159,12 @@ The `DriverBonusReplicationGrain` runs nightly to:
 
 ## Business Rules
 
-1. **Performance Bonus Display**: Only shown to USX OTR drivers; Dedicated/Total drivers see historical data only
+1. **Performance Bonus Display**: 
+   - **USX OTR drivers**: See current bonus section + historical data
+   - **Dedicated/Total drivers**: See historical data only (if they previously received bonuses as USX OTR drivers)
 2. **Data Caching**: Performance bonus data cached in Orleans grains for fast retrieval
 3. **Replication**: Runs nightly to ensure payroll has current bonus data in DB2
-4. **Historical Data**: Retrieved from DB2 tables for trend analysis
+4. **Historical Data**: Retrieved from DB2 tables for trend analysis (3-year lookback)
 
 ## Dependencies
 
