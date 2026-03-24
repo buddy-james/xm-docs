@@ -19,23 +19,16 @@ The bonus system follows a layered architecture pattern:
 ```mermaid
 graph TB
     subgraph "Presentation Layer"
-        V1[Bonus/Index.cshtml]
-        V2[FastTrackReward/Index.cshtml]
-        V3[Payroll/PerformanceBonus.cshtml]
+        V1[Payroll/PerformanceBonus.cshtml]
     end
     
     subgraph "Controller Layer"
-        C1[BonusController]
-        C2[FastTrackRewardController]
-        C3[PayrollController]
+        C1[PayrollController]
     end
     
     subgraph "Service/Grain Layer"
-        G1[DriverBonusSummaryServiceGrain]
-        G2[DriverBonusSummaryCacheGrain]
-        G3[DriverPerformanceBonusCacheGrain]
-        G4[DriverStatsWorkerGrain]
-        G5[DriverBonusReplicationGrain]
+        G1[DriverPerformanceBonusCacheGrain]
+        G2[DriverBonusReplicationGrain]
     end
     
     subgraph "Repository Layer"
@@ -49,95 +42,24 @@ graph TB
     end
     
     V1 --> C1
-    V2 --> C2
-    V3 --> C3
-    
     C1 --> G1
-    C2 --> G4
-    C3 --> G3
+    G1 --> R2
+    R2 --> D1
+    R2 --> D2
     
-    G1 --> G2
-    G2 --> D1
-    G3 --> R2
-    G4 --> D1
-    
-    G5 --> R1
+    G2 --> R1
     R1 --> D1
     R1 --> D2
     
-    style G5 fill:#ffe1e1
+    style G2 fill:#ffe1e1
     style D2 fill:#e1f5ff
 ```
 
 ---
 
-## Driver-Facing Views
+## Driver-Facing View
 
-### 1. Bonus/Index.cshtml
-
-**Location**: `c:\source\xm\EleosIntegration\XpressMobile.EleosIntegration.WebHost\Views\Bonus\Index.cshtml`
-
-**Purpose**: Displays TeamMAX vacation and bonus summary information
-
-**Model**: `BonusSummary` (wraps `VacationEligibility`)
-
-**Key Fields Displayed**:
-- Vacation eligibility (Yes/No)
-- Vacation accrued miles vs target miles
-- Vacation increments available/issued
-- Bonus accrued miles vs target miles
-- Bonus increments issued
-
-**Code Structure**:
-```csharp
-@model XpressMobile.EleosIntegration.WebHost.Models.BonusSummary
-
-// Displays error message if present
-@if (!string.IsNullOrEmpty(Model.ErrorMessage))
-
-// Shows eligibility return message
-@Model.Eligibility.ReturnMessage
-
-// Vacation section
-@Model.Eligibility.VacationEligibleYesNo
-@Model.Eligibility.Vacation.AccruedMiles
-@Model.Eligibility.Vacation.TargetMiles
-@Model.Eligibility.Vacation.IncrementsAvailable
-@Model.Eligibility.Vacation.IncrementsIssued
-
-// Bonus section
-@Model.Eligibility.Bonus.AccruedMiles
-@Model.Eligibility.Bonus.TargetMiles
-@Model.Eligibility.Bonus.IncrementsIssued
-```
-
----
-
-### 2. FastTrackReward/Index.cshtml
-
-**Location**: `c:\source\xm\EleosIntegration\XpressMobile.EleosIntegration.WebHost\Views\FastTrackReward\Index.cshtml`
-
-**Purpose**: Allows drivers to select monthly reward preference (Bonus vs Vacation)
-
-**Model**: `ActionRequest`
-
-**Key Features**:
-- Radio button selection between "Bonus pay" and "Paid Vacation"
-- Lock-in date display (selection deadline)
-- Form submission to save driver's choice
-- JavaScript for UI interaction
-
-**ViewBag Data**:
-- `SelectedItem` - Current selection ("Bonus" or "Vacation")
-- `DriverID` - Driver number
-- `Company` - Company code
-- `NextDate` - Lock-in date for next month
-
-**Form Action**: `POST /FastTrackReward/SetNewSelection`
-
----
-
-### 3. Payroll/PerformanceBonus.cshtml
+### Payroll/PerformanceBonus.cshtml
 
 **Location**: `c:\source\xm\EleosIntegration\XpressMobile.EleosIntegration.WebHost\Views\Payroll\PerformanceBonus.cshtml`
 
@@ -169,115 +91,36 @@ graph TB
 
 ## Controllers
 
-### 1. BonusController
+### PayrollController
 
-**Location**: `c:\source\xm\EleosIntegration\XpressMobile.EleosIntegration.WebHost\Controllers\BonusController.cs`
+**Location**: `c:\source\xm\EleosIntegration\XpressMobile.EleosIntegration.WebHost\Controllers\PayrollController.cs`
 
 **Endpoints**:
 
-#### GET /Bonus/Index
+#### GET /Payroll/PerformanceBonus/{company}/{driverId}
 ```csharp
 [HttpGet]
 [AuthenticateRequest(AuthorizationTokenType.WebToken)]
-public async Task<IActionResult> Index()
+public async Task<IActionResult> PerformanceBonus(string company, string driverId)
 ```
 
 **Flow**:
 1. Authenticate request via WebToken
 2. Get authenticated user from request context
-3. Call `IDriverBonusSummaryServiceGrain.GetDriverBonusSummary()`
-4. Return view with `BonusSummary` model
+3. Call `IDriverPerformanceBonusCacheGrain.GetPerformanceBonus()` for current bonus
+4. Call `IDriverPerformanceBonusCacheGrain.GetPerformanceBonusDetailsGetByDriverAndDateRangeDb2()` for historical data
+5. Return view with `PerformanceBonusData` model
 
 **Error Handling**:
 - Returns unauthorized if authentication fails
 - Returns view with error message if data retrieval fails
-
----
-
-### 2. FastTrackRewardController
-
-**Location**: `c:\source\xm\EleosIntegration\XpressMobile.EleosIntegration.WebHost\Controllers\FastTrackRewardController.cs`
-
-**Endpoints**:
-
-#### GET /FastTrackReward/Index
-```csharp
-[HttpGet]
-public async Task<IActionResult> Index()
-```
-
-**Flow**:
-1. Authenticate via cookie or header token
-2. Get driver info from `IDriverGrain`
-3. Call `IDriverStatsWorkerGrain.GetCurrentStats()` to retrieve current selection
-4. Set ViewBag data for rendering
-5. Return view
-
-**Default Behavior**:
-- If no selection exists, defaults to "Bonus"
-- Sets unlock date to first day of next month
-
-#### POST /FastTrackReward/SetNewSelection
-```csharp
-[HttpPost]
-public async Task<ActionResult> SetNewSelection([FromForm] ActionRequest request)
-```
-
-**Flow**:
-1. Call `IDriverStatsWorkerGrain.SetDriverRewardByUser()` to save selection
-2. Update ViewBag with new selection
-3. Return to Index view
+- Feature flag check for `PerformanceBonus`
 
 ---
 
 ## Orleans Grains
 
-### 1. DriverBonusSummaryServiceGrain
-
-**Location**: `c:\source\xm\EleosIntegration\Grains\DriverBonusSummary\DriverBonusSummaryServiceGrain.cs`
-
-**Type**: Stateless Worker Grain
-
-**Interface**: `IDriverBonusSummaryServiceGrain`
-
-**Key Method**:
-```csharp
-public async Task<Option<VacationEligibility>> GetDriverBonusSummary(MobileDriverIdentifier driver)
-```
-
-**Responsibilities**:
-- Check if `DriverBonusSummary` feature is enabled
-- Delegate to `IDriverBonusSummaryCacheGrain` for actual data retrieval
-- Error handling and logging
-
-**Feature Flag**: `FeatureName.DriverBonusSummary`
-
----
-
-### 2. DriverBonusSummaryCacheGrain
-
-**Location**: `c:\source\xm\EleosIntegration\Grains\DriverBonusSummary\IDriverBonusSummaryCacheGrain.cs`
-
-**Type**: Stateful Grain (keyed by DispatchSystem + DriverNumber)
-
-**Key Methods**:
-```csharp
-Task<Option<VacationEligibility>> GetDriverBonusSummary(DriverIdentifier driver);
-Task CacheDriverBonusSummary(VacationEligibility eligibility);
-```
-
-**State**: `DriverBonusSummaryState`
-
-**Grain Key Pattern**: `(int)DispatchSystem : "{DriverNumber}"`
-
-**Responsibilities**:
-- Cache vacation/bonus eligibility data
-- Retrieve cached data for display
-- Persist state to Orleans storage
-
----
-
-### 3. DriverPerformanceBonusCacheGrain
+### 1. DriverPerformanceBonusCacheGrain
 
 **Location**: `c:\source\xm\EleosIntegration\Grains\Payroll\DriverPerformanceBonusCacheGrain.cs`
 
@@ -306,7 +149,7 @@ Task<ImmutableList<PerformanceBonusDetails>> GetPerformanceBonusDetailsGetByDriv
 
 ---
 
-### 4. DriverBonusReplicationGrain
+### 2. DriverBonusReplicationGrain
 
 **Location**: `c:\source\xm\EleosIntegration\Grains\Bonus\IDriverBonusReplicationGrain.cs`
 
@@ -473,38 +316,6 @@ CREATE PROC [dbo].[GetDriverFuelBonusData]
 
 ---
 
-### 3. FM_TeamMax_BonusInfoHistory_GetByDriver
-
-**Location**: `c:\source\SQLServers\SQLServers\USXSQLPSA\3_Prod\XPM\Stored Procedures\dbo.FM_TeamMax_BonusInfoHistory_GetByDriver.sql`
-
-**Purpose**: Retrieve TeamMAX bonus payment history for a specific driver
-
-**Signature**:
-```sql
-CREATE PROC [dbo].[FM_TeamMax_BonusInfoHistory_GetByDriver]
-(
-   @pDriverCompany VARCHAR(4),
-   @pDriverNumber  VARCHAR(9)
-)
-```
-
-**Source Tables**:
-- `PSA.dbo.SMFD35_XPSFILE_TEAMMAX_HISTORY_HEADER_TABLE` - Bonus history
-- `PSA.dbo.SMFD35_XPSFILE_Employee_Master` - Employee data
-- `PSA.dbo.SMFD35_XPSFILE_Employee_AR_Tran` - AR transactions (paychecks)
-
-**Returns**:
-- `DriverCompany`, `DriverId`
-- `CheckNumber`, `CheckDate`, `CheckDescriptor`, `CheckType`
-- `BonusType`
-
-**Filters**:
-- Specific driver (company + number)
-- Transaction type = 'PY' (Payroll)
-- Check number > 0
-
----
-
 ## DB2 Replication
 
 ### Replication Flow
@@ -617,48 +428,6 @@ graph LR
     style K fill:#ffe1e1
 ```
 
-### TeamMAX Bonus Data Flow
-
-```mermaid
-graph LR
-    subgraph "Source Data"
-        A[(TeamMAX Tables)] --> B[FM_TeamMax_BonusInfoHistory_GetByDriver]
-    end
-    
-    subgraph "XpressMobile"
-        B --> C[DriverBonusSummaryCacheGrain]
-        C --> D[DriverBonusSummaryServiceGrain]
-        D --> E[BonusController]
-        E --> F[Bonus/Index.cshtml]
-        F --> G[Driver Mobile App]
-    end
-    
-    style A fill:#e1f5ff
-```
-
-### Fast Track Reward Data Flow
-
-```mermaid
-graph LR
-    subgraph "Driver Selection"
-        A[Driver Mobile App] --> B[FastTrackReward/Index.cshtml]
-        B --> C[FastTrackRewardController]
-        C --> D[DriverStatsWorkerGrain]
-    end
-    
-    subgraph "Persistence"
-        D --> E[(Grain State Storage)]
-    end
-    
-    subgraph "Retrieval"
-        E --> F[DriverStatsWorkerGrain]
-        F --> G[FastTrackRewardController]
-        G --> H[FastTrackReward/Index.cshtml]
-        H --> I[Driver Mobile App]
-    end
-    
-    style E fill:#fff4e1
-```
 
 ---
 
@@ -671,9 +440,7 @@ graph LR
 - `DriverBonusDataSyncProcessorPeriod` - Interval between runs (typically 24 hours)
 
 **Feature Flags**:
-- `FeatureName.DriverBonusSummary` - Enable/disable TeamMAX bonus view
 - `FeatureName.PerformanceBonus` - Enable/disable performance bonus view
-- `FeatureName.CacheDriverStats` - Enable/disable Fast Track rewards
 - `FeatureName.DriverBonusDataSync` - Enable/disable DB2 replication
 
 **Connection Strings**:
@@ -820,10 +587,11 @@ using (this.logger.BeginTimedOperation(
 ### Common Issues
 
 **Bonus Data Not Displaying**:
-1. Check feature flag: `FeatureName.DriverBonusSummary`
-2. Verify driver is in eligible company (01, 63 for TeamMAX)
+1. Check feature flag: `FeatureName.PerformanceBonus`
+2. Verify driver is eligible (USX OTR drivers for current bonus)
 3. Check grain state for cached data
 4. Verify SQL Server connectivity
+5. Verify DB2 connectivity for historical data
 
 **Replication Failures**:
 1. Check SEQ logs for correlation ID

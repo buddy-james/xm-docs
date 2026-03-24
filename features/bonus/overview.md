@@ -2,14 +2,14 @@
 
 ## Overview
 
-The XpressMobile bonus system provides drivers with visibility into their performance-based compensation through multiple web interfaces. The system integrates data from SQL Server (PSA database), caches it in Orleans grains, displays it to drivers via web views, and replicates bonus data to DB2 (QTOPS) for payroll processing by legacy RPG systems.
+The XpressMobile bonus system provides drivers with visibility into their performance-based compensation (safety and fuel efficiency bonuses). The system integrates data from SQL Server (PSA database), caches it in Orleans grains, displays it to drivers via web views, and replicates bonus data to DB2 (QTOPS) for payroll processing by legacy RPG systems.
 
 ## Business Purpose
 
-Drivers can view and manage three types of bonus information:
-- **Performance Bonus** - Safety and fuel efficiency bonuses based on monthly performance metrics
-- **Vacation & Bonus (TeamMAX)** - Accrued vacation days and bonus miles eligibility
-- **Fast Track Rewards** - Monthly choice between bonus pay or paid vacation
+Drivers can view their **Performance Bonus** information based on:
+- **Safety Score** - Event points, driving hours, and safety incidents
+- **Fuel Efficiency (MPG)** - Dispatch MPG and fuel consumption metrics
+- **Paid Miles** - Tiered mileage-based bonuses (Level 1 & 2)
 
 ## System Architecture
 
@@ -59,12 +59,10 @@ graph TB
 
 ## Key Components
 
-### 1. Driver-Facing Views
+### 1. Driver-Facing View
 
 | View | Purpose | URL Pattern |
 |------|---------|-------------|
-| **Bonus/Index** | TeamMAX vacation & bonus summary | `/Bonus/Index` |
-| **FastTrackReward/Index** | Monthly reward selection (bonus vs vacation) | `/FastTrackReward/Index` |
 | **Payroll/PerformanceBonus** | Detailed performance bonus breakdown with charts | `/Payroll/PerformanceBonus/{company}/{driverId}` |
 
 ### 2. Data Flow
@@ -93,21 +91,13 @@ The `DriverBonusReplicationGrain` runs nightly to:
 
 ## Key Features
 
-### Performance Bonus
+### Performance Bonus Display
 - **Safety Score** - Based on event points, driving hours, safety incidents
 - **Paid Miles Level 1 & 2** - Tiered mileage-based bonuses
+- **Fuel Efficiency** - MPG-based bonus calculations
 - **Historical View** - 3-month to 3-year performance history
 - **Visual Charts** - Donut charts and line graphs for trend analysis
-
-### TeamMAX Bonus
-- **Accrued Miles** - Track progress toward bonus/vacation eligibility
-- **Target Miles** - Goal thresholds for earning rewards
-- **Increments** - Number of bonus/vacation increments earned
-
-### Fast Track Rewards
-- **Monthly Selection** - Drivers choose between bonus pay or vacation
-- **Lock-in Date** - Selection deadline for upcoming month
-- **Driver Stats Integration** - Tracks driver reward preferences
+- **Detailed Breakdown** - Category-specific payout, score/target, and bonus per mile data
 
 ## Technical Stack
 
@@ -132,13 +122,14 @@ The `DriverBonusReplicationGrain` runs nightly to:
 
 ## Business Rules
 
-1. **Performance Bonus**: Only shown to USX OTR drivers; Dedicated/Total drivers see historical data only
-2. **TeamMAX Bonus**: Requires specific company membership (companies 01, 63)
-3. **Fast Track**: Drivers must select reward before monthly lock-in date
-4. **Replication**: Runs nightly to ensure payroll has current bonus data
+1. **Performance Bonus Display**: Only shown to USX OTR drivers; Dedicated/Total drivers see historical data only
+2. **Data Caching**: Performance bonus data cached in Orleans grains for fast retrieval
+3. **Replication**: Runs nightly to ensure payroll has current bonus data in DB2
+4. **Historical Data**: Retrieved from DB2 tables for trend analysis
 
 ## Dependencies
 
-- **Feature Flags**: `DriverBonusSummary`, `PerformanceBonus`, `CacheDriverStats`
+- **Feature Flags**: `PerformanceBonus`, `DriverBonusDataSync`
 - **External Systems**: SQL Server PSA, DB2 QTOPS, RPG Payroll
 - **Orleans Cluster**: Requires healthy grain cluster for caching
+- **Repositories**: `IDriverPerformanceBonusRepository`, `IDriverBonusSyncRepository`
