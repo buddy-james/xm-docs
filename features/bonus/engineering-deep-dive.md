@@ -283,7 +283,7 @@ CREATE PROC [dbo].[GetDriverSafetyScoreBonus]
 
 **Notes**:
 - No WHERE clause (full table replication)
-- Processes ~60k records per year since 2023
+- Replicates ~60k total records accumulated per year since 2023
 - Destination table is truncated before repopulation
 
 ---
@@ -365,7 +365,7 @@ Before bonus data can be replicated to DB2 or displayed to drivers, it must firs
 
 **Key Business Rules**:
 - Prevents duplicate runs (throws error if data exists for period)
-- Processes ~60k driver records per month
+- Processes ~7k active driver records per month (~60k total records accumulated per year since 2023)
 - Calculates safety score based on event points per driving hour
 - Prorates fuel data by driver control group changes
 

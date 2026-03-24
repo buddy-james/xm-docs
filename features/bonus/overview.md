@@ -102,7 +102,7 @@ graph TB
 - Aggregates mileage from Trip Status
 - Includes payroll miles from check details and AR transactions
 - Populates `DriverSafetyScoreBonus` and `DriverSafetyMPGScoreBonus` tables
-- Processes ~60k driver records per month
+- Processes ~7k active drivers per month
 
 **Weekly Snapshot Job** (`DriverSafetyScore28DayBuild`):
 - Runs weekly on Saturday
