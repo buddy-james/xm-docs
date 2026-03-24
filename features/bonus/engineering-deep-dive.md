@@ -67,16 +67,23 @@ graph TB
 
 **Model**: `PerformanceBonusData`
 
+**Driver Eligibility**:
+- **USX OTR drivers**: See current bonus section + historical data
+  - Determined by: Company ≠ 65 (Total) AND truck control group doesn't start with 'D' (Dedicated)
+- **Dedicated/Total drivers**: See historical data only
+  - Only if they have historical bonus records (i.e., previously received bonuses as USX OTR drivers)
+  - Current bonus section is hidden via `IsUsxOtrDriver` flag
+
 **Key Features**:
 - **Current Bonus Section** (USX OTR drivers only):
   - Donut chart showing total bonus breakdown
   - Safety, Paid Miles L1, Paid Miles L2 categories
   - Bonus month and pay date display
-  
-- **Historical Bonus Section** (all drivers):
-  - Line chart with time range filters (3M, YTD, 1Y, 2Y, 3Y)
+  - Team vs Solo driver differentiation
+- **Historical Bonus Section** (all drivers with bonus history):
+  - Line chart with 3M, YTD, 1Y, 2Y, 3Y time ranges
   - Historical bonus table with pay dates and amounts
-  
+  - 3-year data lookback from DB2
 - **Bottom Sheet Details**:
   - Tabbed interface: Payout, Score/Target, Bonus Per Mile
   - Detailed breakdown by category
