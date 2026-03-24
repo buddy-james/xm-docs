@@ -316,6 +316,226 @@ CREATE PROC [dbo].[GetDriverFuelBonusData]
 
 ---
 
+## Bonus Data Calculation (SQL Jobs)
+
+### Overview
+
+Before bonus data can be replicated to DB2 or displayed to drivers, it must first be calculated and populated into the SQL Server tables. This is done by scheduled SQL Server Agent jobs that run stored procedures to build the bonus data.
+
+### 1. DriverSafetyScoreMonthlyBuild
+
+**Location**: `c:\source\SQLServers\SQLServers\USXSQLPSA\3_Prod\PSA\Stored Procedures\dbo.DriverSafetyScoreMonthlyBuild.sql`
+
+**Purpose**: Generate monthly driver safety and fuel bonus data for payroll
+
+**Schedule**: Runs 7 days after end of month (to allow all payroll data to settle)
+
+**Parameters**:
+- `@pBegDate` - Beginning date (defaults to first day of previous month)
+- `@pCompanyList` - Comma-separated company codes (defaults to '01')
+
+**Process Flow**:
+1. **Validate**: Check that data doesn't already exist for the period
+2. **Get Safety Data**: Call `DriverSafetyScoreData_GetByCompanyDriverDate` to retrieve:
+   - Event points from Lytx/DriveCam safety events
+   - Driving hours, on-duty hours, sleeper hours
+   - Safety score calculation: `(EventPoints / DrivingHours) * 500`
+3. **Get Mileage Data**:
+   - Loaded miles, empty miles, dispatch miles from Trip Status
+   - Payroll miles from check details and AR transactions
+   - Minimum pay miles for team drivers
+4. **Get Truck Assignment**: Most recent truck from Resource History
+5. **Validate Lytx Links**:
+   - Check if driver has valid Lytx/DriveCam link
+   - Check if truck has valid Lytx/DriveCam link
+   - Check if truck has event recorder (camera)
+6. **Get Accident Flag**: Check for safety events in period
+7. **Get Safety Video Status**: Check if driver completed safety bonus video
+8. **Get Fuel Data**: Call `DriverMPGScore_GetByCompanyDriverDate` to retrieve:
+   - Fuel used, purchased fuel, dispatch MPG
+   - Paid miles, dispatch miles
+   - Truck details (CTP flag, cab type, APU, idle time)
+9. **Insert Data**:
+   - Insert into `PSA.dbo.DriverSafetyScoreBonus` (safety bonus data)
+   - Insert into `PSA.dbo.DriverSafetyMPGScoreBonus` (fuel bonus data)
+
+**Target Tables**:
+- `PSA.dbo.DriverSafetyScoreBonus` - Monthly safety performance data
+- `PSA.dbo.DriverSafetyMPGScoreBonus` - Monthly fuel efficiency data
+
+**Key Business Rules**:
+- Prevents duplicate runs (throws error if data exists for period)
+- Processes ~60k driver records per month
+- Calculates safety score based on event points per driving hour
+- Prorates fuel data by driver control group changes
+
+---
+
+### 2. DriverSafetyScore28DayBuild
+
+**Location**: `c:\source\SQLServers\SQLServers\USXSQLPSA\3_Prod\PSA\Stored Procedures\dbo.DriverSafetyScore28DayBuild.sql`
+
+**Purpose**: Generate 28-day rolling driver safety snapshots for trending analysis
+
+**Schedule**: Runs weekly on Saturday for the previous Friday snapshot
+
+**Parameters**:
+- `@pEndDate` - End date (defaults to most recent Friday)
+- `@pCompanyList` - Comma-separated company codes (defaults to '01')
+
+**Process Flow**:
+1. **Calculate Date Range**: 28-day period ending on Friday
+2. **Validate**: Check that data doesn't already exist for the period
+3. **Get Safety Data**: Call `DriverSafetyScoreData_GetByCompanyDriverDate`
+4. **Calculate Safety Score**: Same formula as monthly build
+5. **Get Mileage and Truck Data**: Similar to monthly build
+6. **Validate Lytx Links**: Same as monthly build
+7. **Get Payroll Miles**: From check details and AR transactions
+8. **Get Fuel Data**: Call `DriverMPGScore_GetByCompanyDriverDate`
+9. **Purge Old Data**: Delete snapshots older than 26 weeks (6 months retention)
+10. **Insert Data**:
+    - Insert into `PSA.dbo.DriverSafetyScore28Day`
+    - Insert into `PSA.dbo.DriverSafetyMPGScore28Day`
+
+**Target Tables**:
+- `PSA.dbo.DriverSafetyScore28Day` - 28-day safety snapshots
+- `PSA.dbo.DriverSafetyMPGScore28Day` - 28-day fuel snapshots
+
+**Key Business Rules**:
+- Maintains 26 weeks (6 months) of rolling snapshots
+- Used for trending and historical analysis
+- Runs weekly to provide consistent snapshots
+
+---
+
+### 3. DriverSafetyScoreData_GetByCompanyDriverDate
+
+**Location**: `c:\source\SQLServers\SQLServers\USXSQLPSA\3_Prod\PSA\Stored Procedures\dbo.DriverSafetyScoreData_GetByCompanyDriverDate.sql`
+
+**Purpose**: Core data retrieval for driver safety calculations
+
+**Called By**: 
+- `DriverSafetyScoreMonthlyBuild`
+- `DriverSafetyScore28DayBuild`
+
+**Parameters**:
+- `@pCompanyList` - List of companies to process
+- `@pDriverList` - Optional list of specific drivers
+- `@pBegDate` - Beginning date
+- `@pEndDate` - End date
+
+**Data Sources**:
+- **Lytx/DriveCam Events**: Safety events with coaching status
+- **Driver Terminal Time Zones**: For accurate daily boundaries
+- **Event Points**: Calculated based on event severity and coaching status
+
+**Returns**:
+- Event points per driver per day
+- Driving hours, on-duty hours, sleeper hours
+- Driver and terminal information
+
+**Key Business Rules**:
+- Only includes "coachable events" (events that went through face-to-face coaching)
+- Respects driver terminal time zones for daily boundaries
+- Aggregates event points based on severity
+
+---
+
+### 4. DriverMPGScore_GetByCompanyDriverDate
+
+**Location**: `c:\source\SQLServers\SQLServers\USXSQLPSA\3_Prod\PSA\Stored Procedures\dbo.DriverMPGScore_GetByCompanyDriverDate.sql`
+
+**Purpose**: Core data retrieval for driver fuel efficiency calculations
+
+**Called By**:
+- `DriverSafetyScoreMonthlyBuild`
+- `DriverSafetyScore28DayBuild`
+
+**Parameters**:
+- `@pCompanyList` - List of companies to process
+- `@pDriverList` - Optional list of specific drivers
+- `@pBegDate` - Beginning date
+- `@pEndDate` - End date
+
+**Data Sources**:
+- **Platform Science Driver Performance**: Daily fuel, idle, engine time data
+- **Trip Status**: Dispatch miles for MPG calculation
+- **Driver Control Group History**: For prorating fuel across DCG changes
+- **CTP Truck List**: Identifies trucks with unreliable Platform Science data
+
+**Returns**:
+- Fuel used, purchased fuel
+- Paid miles, dispatch miles
+- Dispatch MPG calculation
+- Truck details (CTP flag, cab type, APU, idle time, engine time)
+- Control group and employment status
+
+**Key Business Rules**:
+- Prorates fuel data when driver changes control groups mid-period
+- Excludes CTP trucks (unreliable Platform Science data)
+- Uses purchased fuel (not consumed fuel) for MPG calculation
+- Handles UTC date boundaries from Platform Science data
+
+---
+
+### Bonus Calculation Architecture
+
+```mermaid
+graph TB
+    subgraph "Data Sources"
+        A[Lytx/DriveCam Events]
+        B[Platform Science Driver Performance]
+        C[Trip Status]
+        D[Payroll Check Details]
+        E[Employee AR Transactions]
+        F[Resource History]
+    end
+    
+    subgraph "Core Data Retrieval Procs"
+        G[DriverSafetyScoreData_GetByCompanyDriverDate]
+        H[DriverMPGScore_GetByCompanyDriverDate]
+    end
+    
+    subgraph "Build Procs - SQL Agent Jobs"
+        I[DriverSafetyScoreMonthlyBuild]
+        J[DriverSafetyScore28DayBuild]
+    end
+    
+    subgraph "Calculated Bonus Tables"
+        K[(DriverSafetyScoreBonus)]
+        L[(DriverSafetyMPGScoreBonus)]
+        M[(DriverSafetyScore28Day)]
+        N[(DriverSafetyMPGScore28Day)]
+    end
+    
+    A --> G
+    B --> H
+    C --> H
+    D --> I
+    D --> J
+    E --> I
+    E --> J
+    F --> I
+    F --> J
+    
+    G --> I
+    G --> J
+    H --> I
+    H --> J
+    
+    I --> K
+    I --> L
+    J --> M
+    J --> N
+    
+    style I fill:#ffe1e1
+    style J fill:#ffe1e1
+    style K fill:#e1f5ff
+    style L fill:#e1f5ff
+```
+
+---
+
 ## DB2 Replication
 
 ### Replication Flow
@@ -398,34 +618,76 @@ sequenceDiagram
 
 ## Data Flow Diagrams
 
-### Performance Bonus Data Flow
+### Performance Bonus Data Flow (Complete)
 
 ```mermaid
-graph LR
-    subgraph "Data Calculation"
-        A[Safety Events] --> B[DriverSafetyScore28DayBuild]
-        C[Fuel Data] --> D[DriverSafetyScoreMonthlyBuild]
-        B --> E[(DriverSafetyScoreBonus)]
-        D --> E
+graph TB
+    subgraph "Raw Data Sources"
+        A1[Lytx/DriveCam Safety Events]
+        A2[Platform Science Driver Performance]
+        A3[Trip Status]
+        A4[Payroll Check Details]
+        A5[Employee AR Transactions]
+    end
+    
+    subgraph "SQL Build Jobs - Monthly"
+        B1[DriverSafetyScoreData_GetByCompanyDriverDate]
+        B2[DriverMPGScore_GetByCompanyDriverDate]
+        B3[DriverSafetyScoreMonthlyBuild]
+    end
+    
+    subgraph "Calculated Bonus Tables"
+        C1[(DriverSafetyScoreBonus)]
+        C2[(DriverSafetyMPGScoreBonus)]
     end
     
     subgraph "XpressMobile Display"
-        E --> F[DriverPerformanceBonusRepository]
-        F --> G[DriverPerformanceBonusCacheGrain]
-        G --> H[PayrollController]
-        H --> I[PerformanceBonus.cshtml]
-        I --> J[Driver Mobile App]
+        D1[DriverPerformanceBonusRepository]
+        D2[DriverPerformanceBonusCacheGrain]
+        D3[PayrollController]
+        D4[PerformanceBonus.cshtml]
+        D5[Driver Mobile App]
     end
     
-    subgraph "Payroll Integration"
-        E --> K[DriverBonusReplicationGrain]
-        K --> L[(DB2 PRDPBNT)]
-        L --> M[RPG Payroll System]
+    subgraph "Payroll Integration - Nightly"
+        E1[DriverBonusReplicationGrain]
+        E2[(DB2 PRDPBNT)]
+        E3[(DB2 PRDPBFT)]
+        E4[RPG Payroll System]
     end
     
-    style E fill:#e1f5ff
-    style L fill:#e1f5ff
-    style K fill:#ffe1e1
+    A1 --> B1
+    A2 --> B2
+    A3 --> B2
+    A4 --> B3
+    A5 --> B3
+    
+    B1 --> B3
+    B2 --> B3
+    
+    B3 -->|Monthly Build| C1
+    B3 -->|Monthly Build| C2
+    
+    C1 --> D1
+    C2 --> D1
+    D1 --> D2
+    D2 --> D3
+    D3 --> D4
+    D4 --> D5
+    
+    C1 --> E1
+    C2 --> E1
+    E1 -->|Nightly Sync| E2
+    E1 -->|Nightly Sync| E3
+    E2 --> E4
+    E3 --> E4
+    
+    style B3 fill:#ffe1e1
+    style C1 fill:#e1f5ff
+    style C2 fill:#e1f5ff
+    style E1 fill:#ffe1e1
+    style E2 fill:#fff4e1
+    style E3 fill:#fff4e1
 ```
 
 

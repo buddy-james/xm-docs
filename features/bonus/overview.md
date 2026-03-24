@@ -15,9 +15,19 @@ Drivers can view their **Performance Bonus** information based on:
 
 ```mermaid
 graph TB
-    subgraph "Data Sources"
-        PSA[(SQL Server PSA)]
-        DB2[(DB2 QTOPS)]
+    subgraph "Raw Data Sources"
+        Lytx[Lytx/DriveCam Events]
+        PlatSci[Platform Science]
+        TripData[Trip Status]
+        Payroll[Payroll Data]
+    end
+    
+    subgraph "SQL Build Jobs"
+        BuildJob[DriverSafetyScoreMonthlyBuild]
+    end
+    
+    subgraph "Calculated Bonus Tables"
+        PSA[(SQL Server PSA<br/>DriverSafetyScoreBonus<br/>DriverSafetyMPGScoreBonus)]
     end
     
     subgraph "XpressMobile Backend"
@@ -37,8 +47,16 @@ graph TB
     
     subgraph "Payroll Integration"
         Replication[Bonus Replication Grain]
+        DB2[(DB2 QTOPS<br/>PRDPBNT/PRDPBFT)]
         RPG[RPG Payroll System]
     end
+    
+    Lytx -->|Safety Events| BuildJob
+    PlatSci -->|Fuel/MPG Data| BuildJob
+    TripData -->|Mileage Data| BuildJob
+    Payroll -->|Pay Data| BuildJob
+    
+    BuildJob -->|Monthly Build| PSA
     
     PSA -->|Read Bonus Data| Repos
     Repos -->|Populate| Grains
@@ -47,12 +65,13 @@ graph TB
     Controllers -->|Render| Views
     Views -->|Display| Mobile
     
-    Replication -->|Nightly Sync| PSA
-    Replication -->|Write to DB2| DB2
+    PSA -->|Read for Sync| Replication
+    Replication -->|Nightly Sync| DB2
     DB2 -->|Consumed by| RPG
     
+    style BuildJob fill:#ffe1e1
     style PSA fill:#e1f5ff
-    style DB2 fill:#e1f5ff
+    style DB2 fill:#fff4e1
     style Grains fill:#fff4e1
     style Replication fill:#ffe1e1
 ```
@@ -67,12 +86,30 @@ graph TB
 
 ### 2. Data Flow
 
-1. **Source Data**: Bonus calculations performed in SQL Server (PSA database)
-2. **Caching**: Orleans grains cache bonus data for fast retrieval
-3. **Display**: MVC controllers fetch from grains and render views
-4. **Replication**: Nightly job syncs bonus data to DB2 for payroll processing
+1. **Raw Data Collection**: Safety events (Lytx), fuel data (Platform Science), mileage (Trip Status), payroll data
+2. **Bonus Calculation**: SQL Server Agent jobs run monthly to calculate safety and fuel bonuses
+3. **Data Storage**: Calculated bonus data stored in `DriverSafetyScoreBonus` and `DriverSafetyMPGScoreBonus` tables
+4. **Caching**: Orleans grains cache bonus data for fast retrieval
+5. **Display**: MVC controllers fetch from grains and render views to drivers
+6. **Replication**: Nightly job syncs bonus data to DB2 for payroll processing
 
-### 3. Payroll Integration
+### 3. Bonus Calculation (SQL Jobs)
+
+**Monthly Build Job** (`DriverSafetyScoreMonthlyBuild`):
+- Runs 7 days after end of month
+- Calculates safety scores from Lytx/DriveCam events
+- Calculates fuel efficiency (MPG) from Platform Science data
+- Aggregates mileage from Trip Status
+- Includes payroll miles from check details and AR transactions
+- Populates `DriverSafetyScoreBonus` and `DriverSafetyMPGScoreBonus` tables
+- Processes ~60k driver records per month
+
+**Weekly Snapshot Job** (`DriverSafetyScore28DayBuild`):
+- Runs weekly on Saturday
+- Creates 28-day rolling snapshots for trending
+- Maintains 6 months of historical snapshots
+
+### 4. Payroll Integration
 
 The `DriverBonusReplicationGrain` runs nightly to:
 - Read safety and fuel bonus data from SQL Server
